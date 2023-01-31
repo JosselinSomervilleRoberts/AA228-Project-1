@@ -24,7 +24,11 @@ def prior(vars, G):
     n = len(vars)
     r = [vars[i].r for i in range(n)]
     q = np.array([np.prod(np.array([r[j] for j in inneighbors(G,i)])) for i in range(n)], dtype=int)
-    return [np.ones(([q[i], r[i]])) for i in range(n)]
+    return [np.ones((q[i], r[i])) for i in range(n)]
+
+def prior_for_single_var(vars, G, var_index):
+    q_var = np.prod(np.array([vars[j].r for j in inneighbors(G,var_index)]))
+    return np.ones((q_var, vars[var_index].r))
 
 def sub2ind(siz, x):
     """Algorithm 4.1. - Page 75 of the book - Helper function."""
@@ -60,6 +64,34 @@ def statistics(vars, G, D):
             M[i][j,k] += 1
     return M
 
+def statistics_for_single_var(vars, G, D, var_index):
+    """Algorithm 4.1. - Page 75 of the book.
+    A function for extracting the statistics, or counts,
+    from a discrete data set D, assuming a Bayesian network with variables vars and structure G. The
+    data set is an n x m matrix, where
+    n is the number of variables and
+    m is the number of data points.
+    This function returns an array M of
+    length n. The ith component consists of a qi x ri matrix of counts.
+    The sub2ind(siz, x) function returns a linear index into an array
+    with dimensions specified by siz
+    given coordinates x. It is used to
+    identify which parental instantiation is relevant to a particular data
+    point and variable."""
+
+    q_var = np.prod(np.array([vars[j].r for j in inneighbors(G,var_index)]))
+    M_var = np.zeros((q_var, vars[var_index].r))
+    parents = inneighbors(G,var_index)
+    r_parents = np.array([vars[j].r for j in parents])
+    for index, row in D.iterrows():
+        row = np.array(row)
+        k = row[var_index] - 1 # value of variable
+        j = 0
+        if len(parents) > 0: # if i has parents
+            j = sub2ind(r_parents, row[parents] - 1)
+        M_var[j,k] += 1
+    return M_var
+
 def bayesian_score_component(M, alpha):
     """Algorithm 5.1 - Page 98 of the book - Helper function."""
     p = np.sum(scipy.special.loggamma(alpha + M))
@@ -86,7 +118,24 @@ def bayesian_score(vars, G, D):
     n = len(vars)
     M = statistics(vars, G, D)
     alpha = prior(vars, G)
-    return np.sum(np.array([bayesian_score_component(M[i], alpha[i]) for i in range(n)]))
+    score_components = np.array([bayesian_score_component(M[i], alpha[i]) for i in range(n)])
+    score = np.sum(score_components)
+    return score, score_components
+
+def bayesian_score_recompute_single_var(previous_score, previous_score_components, vars, G, D, var_index):
+    """Recomputes the bayesian score form a previous score after adding a node from i to j."""
+    M_j = statistics_for_single_var(vars, G, D, var_index)
+    alpha_j = prior_for_single_var(vars, G, var_index)
+    new_score_component = bayesian_score_component(M_j, alpha_j)
+    score = previous_score + new_score_component - previous_score_components[var_index]
+    new_score_components = previous_score_components.copy()
+    new_score_components[var_index] = new_score_component
+    return score, new_score_components
+
+def write_gph(dag, idx2names, filename):
+    with open(filename, 'w') as f:
+        for edge in dag.edges():
+            f.write("{}, {}\n".format(idx2names[edge[0]], idx2names[edge[1]]))
 
 class Variable:
     def __init__(self, name, r):
@@ -103,14 +152,31 @@ def compute(infile, outfile):
     G = nx.DiGraph()
     for i in range(len(vars)): G.add_node(i)
     for i in range(3): G.add_edge(2*i, 2*i+1)
-    G = k2([i for i in range(len(vars))], vars, df, max_parents=2)
-    
-    alpha = prior(vars, G)
-    M = statistics(vars, G, df)
+    #G = k2([i for i in range(len(vars))], vars, df, max_parents=2)
 
-    print("Bayesian score: {}".format(bayesian_score(vars, G, df)))
-    print("Prior: {}".format(alpha))
-    print("Statistics: {}".format(M))
+    NUM_ITER_TIMEIT = 1000
+    from time import time
+
+    initial_score, init_comp = bayesian_score(vars, G, df)
+    print("Initial Bayesian score: {}".format(initial_score))
+    print("Initial Bayesian score components: {}".format(init_comp))
+
+    G.add_edge(0, 2)
+    t_start = time()
+    for _ in range(NUM_ITER_TIMEIT):
+        new_score, new_comp = bayesian_score(vars, G, df)
+    t_end = time()
+    print("\nNew Bayesian score: {}".format(new_score))
+    print("New Bayesian score components: {}".format(new_comp))
+    print("Time taken for {} iterations: {} s".format(NUM_ITER_TIMEIT, round(t_end - t_start, 2)))
+
+    t_start = time()
+    for _ in range(NUM_ITER_TIMEIT):
+        clever_score, clever_comp = bayesian_score_recompute_single_var(initial_score, init_comp, vars, G, df, 2)
+    t_end = time()
+    print("\nClever Bayesian score: {}".format(clever_score))
+    print("Clever Bayesian score components: {}".format(clever_comp))
+    print("Time taken for {} iterations: {} s".format(NUM_ITER_TIMEIT, round(t_end - t_start, 2)))
 
 
 
