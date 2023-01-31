@@ -88,11 +88,6 @@ def bayesian_score(vars, G, D):
     alpha = prior(vars, G)
     return np.sum(np.array([bayesian_score_component(M[i], alpha[i]) for i in range(n)]))
 
-def write_gph(dag, idx2names, filename):
-    with open(filename, 'w') as f:
-        for edge in dag.edges():
-            f.write("{}, {}\n".format(idx2names[edge[0]], idx2names[edge[1]]))
-
 class Variable:
     def __init__(self, name, r):
         self.name = name
@@ -108,6 +103,7 @@ def compute(infile, outfile):
     G = nx.DiGraph()
     for i in range(len(vars)): G.add_node(i)
     for i in range(3): G.add_edge(2*i, 2*i+1)
+    G = k2([i for i in range(len(vars))], vars, df, max_parents=2)
     
     alpha = prior(vars, G)
     M = statistics(vars, G, df)
@@ -115,6 +111,31 @@ def compute(infile, outfile):
     print("Bayesian score: {}".format(bayesian_score(vars, G, df)))
     print("Prior: {}".format(alpha))
     print("Statistics: {}".format(M))
+
+
+
+# K2 algorithm
+def k2(ordering, vars, df, max_parents=2):
+    G = nx.DiGraph()
+    G.add_nodes_from(list(range(len(ordering))))
+    for (k, i) in enumerate(ordering[1:]):
+        y = bayesian_score(vars, G, df)
+        while True:
+            y_best, j_best = -np.inf, 0
+            for j in ordering[:k]:
+                if not G.has_edge(j, i):
+                    G.add_edge(j, i)
+                    y_prime = bayesian_score(vars, G, df)
+                    if y_prime > y_best:
+                        y_best, j_best = y_prime, j
+                    G.remove_edge(j, i)
+            if y_best > y:
+                y = y_best
+                G.add_edge(j_best, i)
+            else:
+                break
+    return G
+
 
 
 def main():
