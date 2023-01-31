@@ -35,7 +35,7 @@ def sub2ind(siz, x):
     """Algorithm 4.1. - Page 75 of the book - Helper function."""
     return np.ravel_multi_index(x, siz)
 
-def statistics(vars, G, D):
+def statistics(vars, G, df):
     """Algorithm 4.1. - Page 75 of the book.
     A function for extracting the statistics, or counts,
     from a discrete data set D, assuming a Bayesian network with variables vars and structure G. The
@@ -54,51 +54,49 @@ def statistics(vars, G, D):
     r = np.array([vars[i].r for i in range(n)])
     q = np.array([np.prod(np.array([r[j] for j in inneighbors(G,i)])) for i in range(n)], dtype=int)
     M = [np.zeros((q[i], r[i])) for i in range(n)]
-    parents = [inneighbors(G,i) for i in range(n)]
-    r_parents = [np.array([r[j] for j in parents[i]]) for i in range(n)]
-    for index, row in D.iterrows():
-        #row = np.array(row)
-        for i in range(n):
-            k = row[i] - 1 # value of variable i
-            j = 0
-            if len(parents[i]) > 0: # if i has parents
-                j = sub2ind(r_parents[i], row[parents[i]] - 1)
-            M[i][j,k] += row[-1]
+    
+    for var_index in range(n):
+        parents = inneighbors(G,var_index)
+        r_parents = np.array([vars[j].r for j in parents])
+        has_no_parent = len(parents) == 0
+        df2 = df.groupby(by=[vars[i].name for i in [var_index] + (parents)])['count'].sum().reset_index()
+        for index, row in df2.iterrows():
+            k = row[0] - 1 # value of variable
+            j = 0 if has_no_parent else sub2ind(r_parents, row[1:-1] - 1)
+            M[var_index][j,k] += row[-1]
     return M
 
-def statistics_for_single_var(vars, G, D, var_index):
-    """Algorithm 4.1. - Page 75 of the book.
-    A function for extracting the statistics, or counts,
-    from a discrete data set D, assuming a Bayesian network with variables vars and structure G. The
-    data set is an n x m matrix, where
-    n is the number of variables and
-    m is the number of data points.
-    This function returns an array M of
-    length n. The ith component consists of a qi x ri matrix of counts.
-    The sub2ind(siz, x) function returns a linear index into an array
-    with dimensions specified by siz
-    given coordinates x. It is used to
-    identify which parental instantiation is relevant to a particular data
-    point and variable."""
+def statistics_for_single_var(vars, G, df, var_index):
+    """Computes M for a single var_index.
+    This version is optimized for speed.
+    It groups the data by parents and data instantiation to reduce massively the number of iterations."""
 
     q_var = np.prod(np.array([vars[j].r for j in inneighbors(G,var_index)]))
     M_var = np.zeros((q_var, vars[var_index].r))
     parents = inneighbors(G,var_index)
     r_parents = np.array([vars[j].r for j in parents])
-    for index, row in D.iterrows():
-        #row = np.array(row)
-        k = row[var_index] - 1 # value of variable
-        j = 0
-        if len(parents) > 0: # if i has parents
-            j = sub2ind(r_parents, row[parents] - 1)
+    has_no_parent = len(parents) == 0
+    df2 = df.groupby(by=[vars[i].name for i in [var_index] + (parents)])['count'].sum().reset_index()
+    # A row in df2 is now: [var, parent1, parent2, ..., count]
+    # Which also simplifies the slicing
+
+    for index, row in df2.iterrows():
+        k = row[0] - 1 # value of variable
+        j = 0 if has_no_parent else sub2ind(r_parents, row[1:-1] - 1)
         M_var[j,k] += row[-1]
     return M_var
 
 def bayesian_score_component(M, alpha):
     """Algorithm 5.1 - Page 98 of the book - Helper function."""
     p = np.sum(scipy.special.loggamma(alpha + M))
-    p -= np.sum(scipy.special.loggamma(alpha))
-    p += np.sum(scipy.special.loggamma(np.sum(alpha, axis=1)))
+
+    # I've removed the next line because with a prior of 1, the loggamma of alpha is 0
+    # p -= np.sum(scipy.special.loggamma(alpha))
+
+    # The next line has been removed to be optimized by what follows (using the fact that alpha is a vector of 1s)
+    # p += np.sum(scipy.special.loggamma(np.sum(alpha, axis=1)))
+    p += alpha.shape[0] * np.log(scipy.special.factorial(alpha.shape[1] - 1))
+
     p -= np.sum(scipy.special.loggamma(np.sum(alpha, axis=1) + np.sum(M, axis=1)))
     return p
 
@@ -158,7 +156,7 @@ def compute(infile, outfile):
     for i in range(3): G.add_edge(2*i, 2*i+1)
     #G = k2([i for i in range(len(vars))], vars, df, max_parents=2)
 
-    NUM_ITER_TIMEIT = 10
+    NUM_ITER_TIMEIT = 100
     from time import time
 
     initial_score, init_comp = bayesian_score(vars, G, df)
