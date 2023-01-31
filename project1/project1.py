@@ -7,6 +7,7 @@ from dash import Dash, html
 import dash_cytoscape as cyto
 import matplotlib.pyplot as plt
 import pandas as pd
+from tqdm import tqdm
 
 
 def inneighbors(G, i):
@@ -56,13 +57,13 @@ def statistics(vars, G, D):
     parents = [inneighbors(G,i) for i in range(n)]
     r_parents = [np.array([r[j] for j in parents[i]]) for i in range(n)]
     for index, row in D.iterrows():
-        row = np.array(row)
+        #row = np.array(row)
         for i in range(n):
             k = row[i] - 1 # value of variable i
             j = 0
             if len(parents[i]) > 0: # if i has parents
                 j = sub2ind(r_parents[i], row[parents[i]] - 1)
-            M[i][j,k] += 1
+            M[i][j,k] += row[-1]
     return M
 
 def statistics_for_single_var(vars, G, D, var_index):
@@ -85,12 +86,12 @@ def statistics_for_single_var(vars, G, D, var_index):
     parents = inneighbors(G,var_index)
     r_parents = np.array([vars[j].r for j in parents])
     for index, row in D.iterrows():
-        row = np.array(row)
+        #row = np.array(row)
         k = row[var_index] - 1 # value of variable
         j = 0
         if len(parents) > 0: # if i has parents
             j = sub2ind(r_parents, row[parents] - 1)
-        M_var[j,k] += 1
+        M_var[j,k] += row[-1]
     return M_var
 
 def bayesian_score_component(M, alpha):
@@ -147,6 +148,8 @@ def compute(infile, outfile):
     df = pd.read_csv(infile, delimiter=',')
     df_max = df.max()
     var_names = list(df.columns)
+    df = df.groupby(var_names).size().reset_index(name='count')
+    #print(df)
     vars = [Variable(var_names[i], df_max[i]) for i in range(len(var_names))]
     
     # JUST FOR TESTING
@@ -155,7 +158,7 @@ def compute(infile, outfile):
     for i in range(3): G.add_edge(2*i, 2*i+1)
     #G = k2([i for i in range(len(vars))], vars, df, max_parents=2)
 
-    NUM_ITER_TIMEIT = 1000
+    NUM_ITER_TIMEIT = 10
     from time import time
 
     initial_score, init_comp = bayesian_score(vars, G, df)
@@ -164,7 +167,7 @@ def compute(infile, outfile):
 
     G.add_edge(0, 2)
     t_start = time()
-    for _ in range(NUM_ITER_TIMEIT):
+    for _ in tqdm(range(NUM_ITER_TIMEIT)):
         new_score, new_comp = bayesian_score(vars, G, df)
     t_end = time()
     print("\nNew Bayesian score: {}".format(new_score))
@@ -172,7 +175,7 @@ def compute(infile, outfile):
     print("Time taken for {} iterations: {} s".format(NUM_ITER_TIMEIT, round(t_end - t_start, 2)))
 
     t_start = time()
-    for _ in range(NUM_ITER_TIMEIT):
+    for _ in tqdm(range(NUM_ITER_TIMEIT)):
         clever_score, clever_comp = bayesian_score_recompute_single_var(initial_score, init_comp, vars, G, df, 2)
     t_end = time()
     print("\nClever Bayesian score: {}".format(clever_score))
