@@ -53,14 +53,15 @@ def statistics(vars, G, D):
     r = np.array([vars[i].r for i in range(n)])
     q = np.array([np.prod(np.array([r[j] for j in inneighbors(G,i)])) for i in range(n)], dtype=int)
     M = [np.zeros((q[i], r[i])) for i in range(n)]
+    parents = [inneighbors(G,i) for i in range(n)]
+    r_parents = [np.array([r[j] for j in parents[i]]) for i in range(n)]
     for index, row in D.iterrows():
         row = np.array(row)
         for i in range(n):
             k = row[i] - 1 # value of variable i
-            parents = inneighbors(G,i)
             j = 0
-            if len(parents) > 0: # if i has parents
-                j = sub2ind(r[parents], row[parents] - 1)
+            if len(parents[i]) > 0: # if i has parents
+                j = sub2ind(r_parents[i], row[parents[i]] - 1)
             M[i][j,k] += 1
     return M
 
