@@ -71,7 +71,7 @@ def statistics_for_single_var(vars, G, df, var_index):
     This version is optimized for speed.
     It groups the data by parents and data instantiation to reduce massively the number of iterations."""
 
-    q_var = np.prod(np.array([vars[j].r for j in inneighbors(G,var_index)]))
+    q_var = np.prod(np.array([vars[j].r for j in inneighbors(G,var_index)], dtype=int))
     M_var = np.zeros((q_var, vars[var_index].r))
     parents = inneighbors(G,var_index)
     r_parents = np.array([vars[j].r for j in parents])
@@ -183,10 +183,11 @@ def compute(infile, outfile):
     # print("Clever Bayesian score components: {}".format(clever_compoments))
     # print("Time taken for {} iterations: {} s".format(NUM_ITER_TIMEIT, round(t_end - t_start, 2)))
 
-    k2_iter(vars, df, 1000, max_parents=2)
+    # k2_iter(vars, df, 1000, max_parents=4, name="large")
+    local_search(vars, df, k_max=100000, name="large_local")
 
 
-def k2_iter(vars, df, num_iter, max_parents=2):
+def k2_iter(vars, df, num_iter, max_parents=2, name="small"):
     #past_orderings = set()
     best_score = -np.inf
     best_G = None
@@ -196,7 +197,10 @@ def k2_iter(vars, df, num_iter, max_parents=2):
     G.add_nodes_from(list(range(len(vars))))
     empty_score, empty_score_comp = bayesian_score(vars, G, df)
 
-    for _ in tqdm(range(num_iter)):
+    # idx2names
+    idx2names = {i: vars[i].name for i in range(len(vars))}
+
+    for idx in tqdm(range(num_iter)):
         # generate a random ordering
         ordering = np.random.permutation(len(vars))
         #while ordering in past_orderings:
@@ -208,6 +212,7 @@ def k2_iter(vars, df, num_iter, max_parents=2):
         if score > best_score:
             best_score = score
             best_G = G
+            write_gph(best_G, idx2names, "results/best_" + name + "_" + str(idx) + ".gph")
             print("New best score: {}".format(best_score))
     return best_G, best_score
 
@@ -238,6 +243,45 @@ def k2(ordering, vars, df, max_parents=2, empty_score=None, empty_score_comp=Non
                 break
     return G, score_best
 
+
+
+def is_cyclic(G):
+    return nx.is_directed_acyclic_graph(G) == False
+
+def rand_graph_neighbor_with_score(G, score, score_comp, df, vars):
+    n = G.number_of_nodes()
+    i = np.random.randint(1, n)
+    j = i
+    while j == i:
+        j = np.random.randint(1, n)
+    G_prime = G.copy()
+    if G.has_edge(i, j):
+        G_prime.remove_edge(i, j)
+    else:
+        G_prime.add_edge(i, j)
+    if is_cyclic(G_prime):
+        return G_prime, None, None, j
+    score_prime, score_comp_prime = bayesian_score_recompute_single_var(score, score_comp, vars, G_prime, df, j)
+    return G_prime, score_prime, score_comp_prime, j
+
+# Local Search algorithm
+def local_search(vars, df, k_max, name):
+    # Generate initial graph
+    G = nx.DiGraph()
+    G.add_nodes_from(list(range(len(vars))))
+    score, score_comp = bayesian_score(vars, G, df)
+    idx2names = {i: vars[i].name for i in range(len(vars))}
+
+    for k in tqdm(range(k_max)):
+        G_prime, score_prime, score_comp_prime, j = rand_graph_neighbor_with_score(G, score, score_comp, df, vars)
+        if is_cyclic(G_prime):
+            continue
+        if score_prime > score:
+            score = score_prime
+            score_comp[j] = score_comp_prime    
+            G = G_prime
+            print("New best score: {}".format(score))
+            if score > -425000: write_gph(G, idx2names, "results/best_" + name + "_" + str(k) + ".gph")
 
 
 def main():
