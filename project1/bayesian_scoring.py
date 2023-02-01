@@ -1,7 +1,7 @@
 import scipy.special
 import numpy as np
 import networkx as nx
-from utils import inneighbors
+from utils import inneighbors, is_cyclic
 
 
 def prior_shape(vars, G):
@@ -109,6 +109,8 @@ def bayesian_score(vars, G, D):
     log(Γ(α)/Γ(α + m)) = log Γ(α) −
     log Γ(α + m), and that log Γ(1) =
     0."""
+    if is_cyclic(G):
+        return - np.inf, None
 
     n = len(vars)
     M = statistics(vars, G, D)
