@@ -184,7 +184,7 @@ def compute(infile, outfile):
     # print("Time taken for {} iterations: {} s".format(NUM_ITER_TIMEIT, round(t_end - t_start, 2)))
 
     # k2_iter(vars, df, 1000, max_parents=4, name="large")
-    local_search(vars, df, k_max=100000, name="large_local")
+    local_search_with_optis(vars, df, k_max=100000, name="large_annealing")
 
 
 def k2_iter(vars, df, num_iter, max_parents=2, name="small"):
@@ -282,6 +282,58 @@ def local_search(vars, df, k_max, name):
             G = G_prime
             print("New best score: {}".format(score))
             if score > -425000: write_gph(G, idx2names, "results/best_" + name + "_" + str(k) + ".gph")
+
+
+# Local Search algorithm with Simulated annealing, random restarts and random initializations
+def random_graph_init(vars, df):
+    G = nx.DiGraph()
+    G.add_nodes_from(list(range(len(vars))))
+    score, score_comp = bayesian_score(vars, G, df)
+    return G, score, score_comp
+
+def local_search_with_optis(vars, df, k_max, name,
+                            t_max=40,
+                            k_max_without_improvements=2000,
+                            score_improvement_to_save=1000,
+                            score_min_to_save=-425000,
+                            log_score_every=1000):
+    # Generate initial graph
+    G, score, score_comp = random_graph_init(vars, df)
+    idx2names = {i: vars[i].name for i in range(len(vars))}
+
+    # To keep track of the best graph
+    last_saved_score = -np.inf
+    k_last_improvement = -1
+    k_last_restart = 0
+
+    for k in tqdm(range(k_max)):
+        temp = t_max * (1 - (k - k_last_restart) / (k_max - k_last_restart) )
+        G_prime, score_prime, score_comp_prime, j = rand_graph_neighbor_with_score(G, score, score_comp, df, vars)
+        if score_prime is None: continue # This means that the graph is cyclic
+
+        # Simulated annealing
+        diff = score_prime - score
+        if diff > 0 or np.random.rand() < np.exp(diff/temp):
+            score = score_prime
+            score_comp[j] = score_comp_prime    
+            G = G_prime
+        
+        # Random restarts
+        if diff > 0:
+            k_last_improvement = k
+        if k - k_last_improvement > k_max_without_improvements:
+            k_last_restart = k
+            G, score, score_comp = random_graph_init(vars, df)
+
+        # Saving best graph
+        if diff > 0 and score >= score_min_to_save and score >= last_saved_score + score_improvement_to_save:
+            last_saved_score = score
+            print("New best score: {}".format(score))
+            write_gph(G, idx2names, "results/best_" + name + "_" + str(int(round(-score))) + ".gph")
+
+        # Logging
+        if k % log_score_every == 0:
+            print("Current score: {}".format(score))
 
 
 def main():
