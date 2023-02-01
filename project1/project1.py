@@ -133,9 +133,7 @@ def bayesian_score_recompute_single_var(previous_score, previous_score_component
     alpha_shape_j = prior_shape_for_single_var(vars, G, var_index)
     new_score_component = bayesian_score_component(M_j, alpha_shape_j)
     score = previous_score + new_score_component - previous_score_components[var_index]
-    new_score_components = previous_score_components.copy()
-    new_score_components[var_index] = new_score_component
-    return score, new_score_components
+    return score, new_score_component
 
 def write_gph(dag, idx2names, filename):
     with open(filename, 'w') as f:
@@ -152,62 +150,93 @@ def compute(infile, outfile):
     df_max = df.max()
     var_names = list(df.columns)
     df = df.groupby(var_names).size().reset_index(name='count')
-    #print(df)
     vars = [Variable(var_names[i], df_max[i]) for i in range(len(var_names))]
     
     # JUST FOR TESTING
+    # G = nx.DiGraph()
+    # for i in range(len(vars)): G.add_node(i)
+    # for i in range(len(vars)//2): G.add_edge(2*i, 2*i+1)
+
+    # NUM_ITER_TIMEIT = 100
+    # from time import time
+
+    # initial_score, init_comp = bayesian_score(vars, G, df)
+    # print("Initial Bayesian score: {}".format(initial_score))
+    # print("Initial Bayesian score components: {}".format(init_comp))
+
+    # G.add_edge(0, 2)
+    # t_start = time()
+    # for _ in tqdm(range(NUM_ITER_TIMEIT)):
+    #     new_score, new_comp = bayesian_score(vars, G, df)
+    # t_end = time()
+    # print("\nNew Bayesian score: {}".format(new_score))
+    # print("New Bayesian score components: {}".format(new_comp))
+    # print("Time taken for {} iterations: {} s".format(NUM_ITER_TIMEIT, round(t_end - t_start, 2)))
+
+    # t_start = time()
+    # for _ in tqdm(range(NUM_ITER_TIMEIT)):
+    #     clever_score, clever_comp = bayesian_score_recompute_single_var(initial_score, init_comp, vars, G, df, 2)
+    # t_end = time()
+    # clever_compoments = init_comp.copy()
+    # clever_compoments[2] = clever_comp
+    # print("\nClever Bayesian score: {}".format(clever_score))
+    # print("Clever Bayesian score components: {}".format(clever_compoments))
+    # print("Time taken for {} iterations: {} s".format(NUM_ITER_TIMEIT, round(t_end - t_start, 2)))
+
+    k2_iter(vars, df, 1000, max_parents=2)
+
+
+def k2_iter(vars, df, num_iter, max_parents=2):
+    #past_orderings = set()
+    best_score = -np.inf
+    best_G = None
+
+    # Compute empty score
     G = nx.DiGraph()
-    for i in range(len(vars)): G.add_node(i)
-    for i in range(len(vars)//2): G.add_edge(2*i, 2*i+1)
-    #G = k2([i for i in range(len(vars))], vars, df, max_parents=2)
+    G.add_nodes_from(list(range(len(vars))))
+    empty_score, empty_score_comp = bayesian_score(vars, G, df)
 
-    NUM_ITER_TIMEIT = 100
-    from time import time
+    for _ in tqdm(range(num_iter)):
+        # generate a random ordering
+        ordering = np.random.permutation(len(vars))
+        #while ordering in past_orderings:
+        #    ordering = np.random.permutation(len(vars))
+        #past_orderings.add(ordering)
 
-    initial_score, init_comp = bayesian_score(vars, G, df)
-    print("Initial Bayesian score: {}".format(initial_score))
-    print("Initial Bayesian score components: {}".format(init_comp))
-
-    G.add_edge(0, 2)
-    t_start = time()
-    for _ in tqdm(range(NUM_ITER_TIMEIT)):
-        new_score, new_comp = bayesian_score(vars, G, df)
-    t_end = time()
-    print("\nNew Bayesian score: {}".format(new_score))
-    print("New Bayesian score components: {}".format(new_comp))
-    print("Time taken for {} iterations: {} s".format(NUM_ITER_TIMEIT, round(t_end - t_start, 2)))
-
-    t_start = time()
-    for _ in tqdm(range(NUM_ITER_TIMEIT)):
-        clever_score, clever_comp = bayesian_score_recompute_single_var(initial_score, init_comp, vars, G, df, 2)
-    t_end = time()
-    print("\nClever Bayesian score: {}".format(clever_score))
-    print("Clever Bayesian score components: {}".format(clever_comp))
-    print("Time taken for {} iterations: {} s".format(NUM_ITER_TIMEIT, round(t_end - t_start, 2)))
-
+        # run k2 on the ordering
+        G, score = k2(ordering, vars, df, max_parents=max_parents, empty_score=empty_score, empty_score_comp=empty_score_comp.copy())
+        if score > best_score:
+            best_score = score
+            best_G = G
+            print("New best score: {}".format(best_score))
+    return best_G, best_score
 
 
 # K2 algorithm
-def k2(ordering, vars, df, max_parents=2):
+def k2(ordering, vars, df, max_parents=2, empty_score=None, empty_score_comp=None):
     G = nx.DiGraph()
     G.add_nodes_from(list(range(len(ordering))))
+    score, score_comp = empty_score, empty_score_comp
+    if score is None or score_comp is None: score, score_comp = bayesian_score(vars, G, df)
     for (k, i) in enumerate(ordering[1:]):
-        y = bayesian_score(vars, G, df)
+        if len(inneighbors(G, i)) >= max_parents:
+            continue
         while True:
-            y_best, j_best = -np.inf, 0
+            score_best, j_best, score_comp_best = -np.inf, 0, None
             for j in ordering[:k]:
                 if not G.has_edge(j, i):
                     G.add_edge(j, i)
-                    y_prime = bayesian_score(vars, G, df)
-                    if y_prime > y_best:
-                        y_best, j_best = y_prime, j
+                    new_score, new_score_comp = bayesian_score_recompute_single_var(score, score_comp, vars, G, df, i)
+                    if new_score > score_best:
+                        score_best, j_best, score_comp_best = new_score, j, new_score_comp
                     G.remove_edge(j, i)
-            if y_best > y:
-                y = y_best
+            if score_best > score:
+                score = score_best
+                score_comp[i] = score_comp_best
                 G.add_edge(j_best, i)
             else:
                 break
-    return G
+    return G, score_best
 
 
 
