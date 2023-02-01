@@ -5,27 +5,73 @@ import numpy as np
 from bayesian_scoring import bayesian_score, bayesian_score_recompute_single_var
 
 
-def rand_graph_neighbor_with_score(G, score, score_comp, df, vars):
+def rand_graph_neighbor_with_score(G, score, score_comp, df, vars, tabu=None):
+    # There is a total of n(n-1) posssible actions
     n = G.number_of_nodes()
-    i = np.random.randint(1, n)
-    j = i
-    while j == i:
-        j = np.random.randint(1, n)
+
+    # Tabu search
+    first_iter = True
+    while tabu is not None and (first_iter or (i, j, action) in tabu):
+        first_iter = False
+        i = np.random.randint(1, n)
+        j = i
+        while j == i:
+            j = np.random.randint(1, n)
+        if i > j: i, j = j, i
+        actions = [0, 1, 2]
+        if G.has_edge(i, j):
+            actions.remove(1)
+        elif G.has_edge(j, i):
+            actions.remove(2)
+        else:
+            actions.remove(0)
+        action = actions[0]
+        possible_actions = [action for action in actions if (i, j, action) not in tabu]
+        action = np.random.choice(possible_actions)
+    tabu.add((i, j))
+
+    # Generate neighbor
     G_prime = G.copy()
-    if G.has_edge(i, j):
-        G_prime.remove_edge(i, j)
-    else:
+    recompute_i = False
+    recompute_j = False
+    if action == 0:
+        if G.has_edge(i, j):
+            G_prime.remove_edge(i, j)
+            recompute_j = True
+        if G.has_edge(j, i):
+            G_prime.remove_edge(j, i)
+            recompute_i = True
+    elif action == 1:
+        if G.has_edge(j, i):
+            G_prime.remove_edge(j, i)
+            recompute_i = True
         G_prime.add_edge(i, j)
+        recompute_j = True
+    elif action == 2:
+        if G.has_edge(i, j):
+            G_prime.remove_edge(i, j)
+            recompute_j = True
+        G_prime.add_edge(j, i)
+        recompute_i = True
+
+    # Check if neighbor is cyclic
     if is_cyclic(G_prime):
-        return G_prime, None, None, j
-    score_prime, score_comp_prime = bayesian_score_recompute_single_var(score, score_comp, vars, G_prime, df, j)
-    return G_prime, score_prime, score_comp_prime, j
+        return G_prime, None, (None, None), (i, j)
+
+    # Compute new score
+    score_prime, score_comp_prime_i, score_comp_prime_j = score, score_comp[i], score_comp[j]
+    if recompute_i:
+        score_prime, score_comp_prime_i = bayesian_score_recompute_single_var(score_prime, score_comp, vars, G_prime, df, i)
+    if recompute_j:
+        score_prime, score_comp_prime_j = bayesian_score_recompute_single_var(score_prime, score_comp, vars, G_prime, df, j)
+    return G_prime, score_prime, (score_comp_prime_i, score_comp_prime_j), (i, j)
 
 # Local Search algorithm
-def local_search(vars, df, k_max, data_name):
+def local_search(vars, df, k_max, data_name, G=None):
     # Generate initial graph
-    G = nx.DiGraph()
-    G.add_nodes_from(list(range(len(vars))))
+    if G is None:
+        G = nx.DiGraph()
+        G.add_nodes_from(list(range(len(vars))))
     score, score_comp = bayesian_score(vars, G, df)
 
     for k in tqdm(range(k_max)):
@@ -37,7 +83,7 @@ def local_search(vars, df, k_max, data_name):
             score_comp[j] = score_comp_prime    
             G = G_prime
             print("New best score: {}".format(score))
-            if score > -425000: write_gph(G, vars, data_name=data_name, gph_name="best_" + str(k), score=score)
+            if score > -425000: write_gph(G, vars, data_name=data_name, gph_name="local_best_" + str(k), score=score)
     return G, score
 
 
@@ -48,44 +94,60 @@ def random_graph_init(vars, df):
     score, score_comp = bayesian_score(vars, G, df)
     return G, score, score_comp
 
-def local_search_with_optis(vars, df, k_max, data_name,
+def local_search_with_optis(vars, df, k_max, data_name, G=None,
                             t_max=5,
                             k_max_without_improvements=2000,
                             score_improvement_to_save=5,
                             score_min_to_save=-4200,
-                            log_score_every=1000):
+                            log_score_every=1000,
+                            return_on_restart=False):
     # Generate initial graph
-    G, score, score_comp = random_graph_init(vars, df)
+    score, score_comp = None, None
+    if G is None:
+        G, score, score_comp = random_graph_init(vars, df)
+    else:
+        score, score_comp = bayesian_score(vars, G, df)
 
     # To keep track of the best graph
     last_saved_score = -np.inf
     k_last_improvement = -1
     k_last_restart = 0
+    
+    # Tabu
+    tabu = set()
+    tabu_full_threshold = 0.9 * len(vars) * (len(vars) - 1)
 
     for k in tqdm(range(k_max)):
         temp = t_max * (1 - (k - k_last_restart) / (k_max - k_last_restart) )
-        G_prime, score_prime, score_comp_prime, j = rand_graph_neighbor_with_score(G, score, score_comp, df, vars)
+        G_prime, score_prime, (score_comp_prime_i, score_comp_prime_j), (i, j) = rand_graph_neighbor_with_score(G, score, score_comp, df, vars, tabu=tabu)
         if score_prime is None: continue # This means that the graph is cyclic
 
         # Simulated annealing
         diff = score_prime - score
         if diff > 0 or np.random.rand() < np.exp(diff/temp):
             score = score_prime
-            score_comp[j] = score_comp_prime    
+            score_comp[i] = score_comp_prime_i  
+            score_comp[j] = score_comp_prime_j   
             G = G_prime
+            tabu.clear()
         
         # Random restarts
         if diff > 0:
             k_last_improvement = k
-        if k - k_last_improvement > k_max_without_improvements:
+        if k - k_last_improvement > k_max_without_improvements or len(tabu) > tabu_full_threshold: # No improvement for k_max_without_improvements steps or Tabu is 90% full
+            if return_on_restart:
+                print("Stopping at step {} ({} steps without improvement)".format(k, k - k_last_improvement))
+                return G, score
+            print("Restarting at step {} ({} steps without improvement)".format(k, k - k_last_improvement))
             k_last_restart = k
             G, score, score_comp = random_graph_init(vars, df)
+            tabu.clear()
 
         # Saving best graph
         if diff > 0 and score >= score_min_to_save and score >= last_saved_score + score_improvement_to_save:
             last_saved_score = score
             print("New best score: {}".format(score))
-            write_gph(G, vars, data_name=data_name, gph_name="score_" + str(int(round(-score))), score=score)
+            write_gph(G, vars, data_name=data_name, gph_name="tabu_score_" + str(int(round(-score))), score=score)
 
         # Logging
         if k % log_score_every == 0:
@@ -120,4 +182,4 @@ if __name__ == "__main__":
     else:
         G, score = local_search(vars, df, 1000, data_name=data_name)
     print("Best score: {}".format(score))
-    write_gph(G, vars, data_name=data_name, gph_name="best", score=score)
+    write_gph(G, vars, data_name=data_name, gph_name="local_best", score=score)

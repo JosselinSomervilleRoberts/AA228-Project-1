@@ -27,7 +27,7 @@ def k2_iter(vars, df, num_iter, max_parents=2, data_name="small"):
         if score > best_score:
             best_score = score
             best_G = G
-            write_gph(best_G, vars, data_name=data_name, gph_name=str(idx), score=best_score)
+            write_gph(best_G, vars, data_name=data_name, gph_name="k2_" + str(idx), score=best_score)
             print("New best score: {}".format(best_score))
     return best_G, best_score
 
@@ -75,4 +75,4 @@ if __name__ == "__main__":
     # Run k2
     G, score = k2_iter(vars, df, 1000, max_parents=4, data_name=data_name)
     print("Best score: {}".format(score))
-    write_gph(G, vars, data_name=data_name, gph_name="best", score=score)
+    write_gph(G, vars, data_name=data_name, gph_name="k2_best", score=score)

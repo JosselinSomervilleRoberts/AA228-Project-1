@@ -26,6 +26,16 @@ def load_data(infile):
 def is_cyclic(G):
     return nx.is_directed_acyclic_graph(G) == False
 
+def load_gph(gph_file, vars):
+    G = nx.DiGraph()
+    G.add_nodes_from(list(range(len(vars))))
+    names2idx = {vars[i].name: i for i in range(len(vars))}
+    with open(gph_file, 'r') as f:
+        for line in f:
+            edge = line.replace('\n', '').replace(' ', '').split(',')
+            G.add_edge(names2idx[edge[0]], names2idx[edge[1]])
+    return G
+
 def write_gph(dag, vars, data_name, gph_name, score=None):
     # create directory if not exists
     sec = seconds_since_beginning_of_project_at_first_execution()

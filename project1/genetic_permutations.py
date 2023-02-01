@@ -15,6 +15,8 @@ from utils import write_gph
 import random
 from k2_search import k2
 from bayesian_scoring import bayesian_score
+from heapq import heappush, heappushpop, heappop
+from local_search import local_search_with_optis
 
 # This function initializes the population
 # Input: population size, number of genes, gene range
@@ -32,35 +34,89 @@ def fitness_fn_permutation(individual, vars, df, max_parents=2, empty_score=None
 
     # Compute the best graph found by the K2 algorithm
     G, score = k2(individual, vars, df, max_parents=max_parents, empty_score=empty_score, empty_score_comp=empty_score_comp)
-    return score
+    return score, G
+
+
+class Record:
+
+    def __init__(self, fitness, individual, G=None):
+        self.fitness = fitness
+        self.individual = individual
+        self.G = G
+
+    def __lt__(self, other):
+        return self.fitness < other.fitness
+
+    def __eq__(self, other):
+        return self.fitness == other.fitness
 
 
 def genetic_algorithm(fitness_fn, size_population, nb_genes,
-                     num_generations, num_elites, probability_crossover, 
-                     probability_mutation):
+                     num_generations, fraction_elites, probability_crossover, 
+                     probability_mutation,
+                     data_name, vars,
+                     keep_best_nb=10,
+                     nb_gens_max_without_improvement=10):
+    # Print parameters of the algorithm
+    num_elites = int(fraction_elites * size_population)
+    print(f"Population size: {size_population} | Number of generations: {num_generations} | Number of elites: {num_elites} | Probability of crossover: {probability_crossover} | Probability of mutation: {probability_mutation}")
+    print(f"Number of genes: {nb_genes} | Data name: {data_name} | Keep best nb: {keep_best_nb} | Max gens without improvement: {nb_gens_max_without_improvement}")
+
     # Initialize the population
     population = init_population(size_population, nb_genes)
-    #print(population[0])
+    fitness_scores = np.zeros(size_population)
+    new_fitness = [None] * size_population
+    best_individuals = []
+    G = [None] * size_population
+    idx_best_saved = 0
+
+    # best score (for ealy stopping)
+    best_score = -np.inf
+    last_gen_improvement = -1
 
     for generation in range(num_generations):
         # Evaluate the fitness of each individual in the population
-        # population_fitness = [(individual, fitness_fn(individual)) for individual in population]
-        population_fitness = []
-        for individual in tqdm(population):
-            #print("indiv:", individual)
-            population_fitness.append((individual, fitness_fn(individual)))
+        for i, individual in enumerate(tqdm(population)):
+            if new_fitness[i] is None: # If the individual was modified, it needs to be recomputed
+                fitness_scores[i], G[i] = fitness_fn(individual)
+            else: # it is an individual from the previous generation, so we already know it's score
+                fitness_scores[i] = new_fitness[i]
+        new_fitness = [None] * size_population
         
         # Sort the population by fitness in descending order
-        population_fitness.sort(key=lambda x: x[1], reverse=True)
+        indices = np.argsort(-fitness_scores)
+        for i in range(min(keep_best_nb, size_population)):
+            rec = Record(fitness_scores[indices[i]], population[indices[i]], G[indices[i]])
+            if len(best_individuals) < keep_best_nb:
+                heappush(best_individuals, rec)
+            elif not rec in best_individuals:
+                rec_popped = heappushpop(best_individuals, rec)
+                if rec_popped.fitness == fitness_scores[indices[i]]: # if the individual was not added to the heap
+                    # no individual will be added since they are sorted, so it will only get worse
+                    break
+                else: # new best individual, so we save its graph
+                    idx_best_saved += 1
+                    write_gph(rec.G, vars, data_name=data_name, gph_name="genetic_" + str(idx_best_saved), score=fitness_scores[indices[i]])
+
+        # Displays useful information about the current generation
+        print(f"Generation {generation + 1} | Best fitness: {fitness_scores[indices[0]]} | Average fitness: {np.mean(fitness_scores)}")
+
+        # Early stoping if no improvement for X generations
+        if fitness_scores[indices[0]] > best_score:
+            best_score = fitness_scores[indices[0]]
+            last_gen_improvement = generation
+        elif generation - last_gen_improvement > nb_gens_max_without_improvement:
+            break
         
         # Select the elites individuals
-        elites = [individual for (individual, fitness) in population_fitness[:num_elites]]
+        elites = [population[idx] for idx in indices[:num_elites]]
+        new_fitness[:num_elites] = fitness_scores[indices[:num_elites]]
         
         # Generate the offspring for the next generation
         offspring = elites[:]
         while len(offspring) < size_population:
             # Select two parents using the tournament selection method
-            parent1, parent2 = tournament_selection(population_fitness, 2)
+            parent1, fitness_parent_1, parent2, fitness_parent_2 = tournament_selection(population, fitness_scores, 2)
             
             # Crossover with a probability of `probability_crossover`
             if random.random() < probability_crossover:
@@ -68,29 +124,29 @@ def genetic_algorithm(fitness_fn, size_population, nb_genes,
                 offspring.append(child1)
                 offspring.append(child2)
             else:
+                new_fitness[len(offspring)] = fitness_parent_1
                 offspring.append(parent1)
+                new_fitness[len(offspring)] = fitness_parent_2
                 offspring.append(parent2)
         
         # Mutate the offspring with a probability of `probability_mutation`
         for i in range(len(offspring)):
             if random.random() < probability_mutation:
                 mutate(offspring[i])
+                new_fitness[i] = None
         
         # Replace the population with the offspring
-        population = offspring[:]
-
-        # Displays useful information about the current generation
-        print(f"Generation {generation + 1} | Best fitness: {population_fitness[0][1]}")
+        population = np.array(offspring)
     
-    # Return the best individual from the final population
-    population_fitness = [(individual, fitness_fn(individual)) for individual in population]
-    population_fitness.sort(key=lambda x: x[1], reverse=True)
-    return population_fitness[0][0], population_fitness[0][1]
+    # Return the best individuals found
+    return best_individuals
 
-def tournament_selection(population_fitness, size_tournament):
-    tournament = random.sample(population_fitness, size_tournament)
-    tournament.sort(key=lambda x: x[1], reverse=True)
-    return tournament[0][0], tournament[1][0]
+def tournament_selection(population, fitness_scores, size_tournament):
+    indices = np.random.choice(len(population), size_tournament, replace=False)
+    tournament = population[indices]
+    tournament_fitness = fitness_scores[indices]
+    indices = np.argsort(-tournament_fitness)
+    return tournament[indices[0]], tournament_fitness[indices[0]], tournament[indices[1]], tournament_fitness[indices[1]]
 
 def mix_genes(genes1, genes2, i, j):
     new_genes = np.zeros(len(genes1), dtype=int)
@@ -110,14 +166,13 @@ def crossover(parent1, parent2):
         i, j = j, i
     child1 = mix_genes(parent1, parent2, i, j)
     child2 = mix_genes(parent2, parent1, i, j)
-    #print("child 1:", child1)
-    #print("child 2:", child2)
     return child1, child2
 
 def mutate(individual):
     # randomly swaps two genes of the individual
     i = random.randint(0, len(individual) - 1)
-    j = random.randint(0, len(individual) - 1)
+    j = i
+    while j == i: j = random.randint(0, len(individual) - 1)
     individual[i], individual[j] = individual[j], individual[i]
 
 
@@ -146,7 +201,33 @@ if __name__ == "__main__":
     fitness_fn = lambda individual: fitness_fn_permutation(individual, vars, df, max_parents=max_parents, empty_score=empty_score, empty_score_comp=empty_score_comp.copy())
 
     # Run the genetic algorithm
-    best_ordering, best_score = genetic_algorithm(fitness_fn, nb_genes=len(vars), size_population=100, num_generations=100, num_elites=10, probability_crossover=0.8, probability_mutation=0.1)
-    best_individual, best_score = k2(best_ordering, vars, df, max_parents=max_parents, empty_score=empty_score, empty_score_comp=empty_score_comp)
+    best_individuals = genetic_algorithm(fitness_fn,
+                                        nb_genes=len(vars),
+                                        size_population=200,
+                                        num_generations=20,
+                                        fraction_elites=0.08,
+                                        probability_crossover=0.8,
+                                        probability_mutation=0.1,
+                                        data_name=data_name,
+                                        vars=vars,
+                                        nb_gens_max_without_improvement=5)
+    best_ordering, best_score, best_G = None, None, None
+    while len(best_individuals) > 0:
+        rec = heappop(best_individuals)
+        best_score = rec.fitness
+        best_ordering = rec.individual
+        best_G = rec.G
+
+    if best_G is None: best_G, best_score = k2(best_ordering, vars, df, max_parents=max_parents, empty_score=empty_score, empty_score_comp=empty_score_comp)
     print("Best score: {}".format(best_score))
-    write_gph(G, vars, data_name=data_name, gph_name="best", score=best_score)
+    write_gph(best_G, vars, data_name=data_name, gph_name="best", score=best_score)
+
+    # Improve with local search
+    best_G, best_score = local_search_with_optis(vars, df, k_max=10000, data_name=data_name, G=best_G, t_max=0.1,
+                            k_max_without_improvements=500,
+                            score_improvement_to_save=1.0,
+                            score_min_to_save=-3820,
+                            log_score_every=1000,
+                            return_on_restart=True)
+    print("Best score after local search: {}".format(best_score))
+    write_gph(best_G, vars, data_name=data_name, gph_name="best_after_optims", score=best_score)
