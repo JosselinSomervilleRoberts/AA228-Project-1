@@ -58,7 +58,7 @@ def genetic_algorithm(fitness_fn, size_population, nb_genes,
                      keep_best_nb=10,
                      nb_gens_max_without_improvement=10):
     # Print parameters of the algorithm
-    num_elites = int(fraction_elites * size_population)
+    num_elites = int(size_population - 2 * np.ceil(((1 -fraction_elites) * size_population) / 2))
     print(f"Population size: {size_population} | Number of generations: {num_generations} | Number of elites: {num_elites} | Probability of crossover: {probability_crossover} | Probability of mutation: {probability_mutation}")
     print(f"Number of genes: {nb_genes} | Data name: {data_name} | Keep best nb: {keep_best_nb} | Max gens without improvement: {nb_gens_max_without_improvement}")
 
@@ -89,6 +89,8 @@ def genetic_algorithm(fitness_fn, size_population, nb_genes,
             rec = Record(fitness_scores[indices[i]], population[indices[i]], G[indices[i]])
             if len(best_individuals) < keep_best_nb:
                 heappush(best_individuals, rec)
+                idx_best_saved += 1
+                write_gph(rec.G, vars, data_name=data_name, gph_name="genetic_" + str(idx_best_saved), score=fitness_scores[indices[i]])
             elif not rec in best_individuals:
                 rec_popped = heappushpop(best_individuals, rec)
                 if rec_popped.fitness == fitness_scores[indices[i]]: # if the individual was not added to the heap
@@ -105,7 +107,7 @@ def genetic_algorithm(fitness_fn, size_population, nb_genes,
         if fitness_scores[indices[0]] > best_score:
             best_score = fitness_scores[indices[0]]
             last_gen_improvement = generation
-        elif generation - last_gen_improvement > nb_gens_max_without_improvement:
+        elif generation - last_gen_improvement >= nb_gens_max_without_improvement:
             break
         
         # Select the elites individuals
@@ -158,7 +160,7 @@ def mix_genes(genes1, genes2, i, j):
 
 def crossover(parent1, parent2):
     # randomly keeps a section of parent1 and fills the rest by the order specified by the gene of parent2
-    # It is not possible to simply fill the missing genes byt the genes of parent2 as we are modeling eprmutations
+    # It is not possible to simply fill the missing genes byt the genes of parent2 as we are modeling permutations
     # and therefore each gene can only appear once
     i = random.randint(0, len(parent1) - 1)
     j = random.randint(0, len(parent1) - 1)
@@ -178,10 +180,10 @@ def mutate(individual):
 
 if __name__ == "__main__":
     import sys
-    from utils import load_data, write_gph
+    from utils import load_data, write_gph, load_gph
 
     # Check arguments
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         raise Exception("usage: python k2_search.py <infile>.csv")
     inputfilename = sys.argv[1]
     data_name = inputfilename.split("/")[-1].split(".")[0]
@@ -189,45 +191,55 @@ if __name__ == "__main__":
     # Load data
     df, vars = load_data(inputfilename)
 
-    # Compute empty score
-    G = nx.DiGraph()
-    G.add_nodes_from(list(range(len(vars))))
-    empty_score, empty_score_comp = bayesian_score(vars, G, df)
+    # If it's only reoptimization
+    best_G = None
+    only_reoptimization = False
+    if len(sys.argv) == 3:
+        gph_name = sys.argv[2]
+        best_G = load_gph(gph_name, vars)
+        only_reoptimization = True
+        print("Reoptimization of the graph " + gph_name)
 
-    # Constants
-    max_parents = 4
+    if not only_reoptimization:
+        # Compute empty score
+        G = nx.DiGraph()
+        G.add_nodes_from(list(range(len(vars))))
+        empty_score, empty_score_comp = bayesian_score(vars, G, df)
 
-    # Define the fitness function
-    fitness_fn = lambda individual: fitness_fn_permutation(individual, vars, df, max_parents=max_parents, empty_score=empty_score, empty_score_comp=empty_score_comp.copy())
+        # Constants
+        max_parents = 4
 
-    # Run the genetic algorithm
-    best_individuals = genetic_algorithm(fitness_fn,
-                                        nb_genes=len(vars),
-                                        size_population=200,
-                                        num_generations=20,
-                                        fraction_elites=0.08,
-                                        probability_crossover=0.8,
-                                        probability_mutation=0.1,
-                                        data_name=data_name,
-                                        vars=vars,
-                                        nb_gens_max_without_improvement=5)
-    best_ordering, best_score, best_G = None, None, None
-    while len(best_individuals) > 0:
-        rec = heappop(best_individuals)
-        best_score = rec.fitness
-        best_ordering = rec.individual
-        best_G = rec.G
+        # Define the fitness function
+        fitness_fn = lambda individual: fitness_fn_permutation(individual, vars, df, max_parents=max_parents, empty_score=empty_score, empty_score_comp=empty_score_comp.copy())
 
-    if best_G is None: best_G, best_score = k2(best_ordering, vars, df, max_parents=max_parents, empty_score=empty_score, empty_score_comp=empty_score_comp)
-    print("Best score: {}".format(best_score))
-    write_gph(best_G, vars, data_name=data_name, gph_name="best", score=best_score)
+        # Run the genetic algorithm
+        best_individuals = genetic_algorithm(fitness_fn,
+                                            nb_genes=len(vars),
+                                            size_population=30,
+                                            num_generations=10,
+                                            fraction_elites=0.18,
+                                            probability_crossover=0.8,
+                                            probability_mutation=0.1,
+                                            data_name=data_name,
+                                            vars=vars,
+                                            nb_gens_max_without_improvement=3)
+        best_ordering, best_score, best_G = None, None, None
+        while len(best_individuals) > 0:
+            rec = heappop(best_individuals)
+            best_score = rec.fitness
+            best_ordering = rec.individual
+            best_G = rec.G
+
+        if best_G is None: best_G, best_score = k2(best_ordering, vars, df, max_parents=max_parents, empty_score=empty_score, empty_score_comp=empty_score_comp)
+        print("Best score: {}".format(best_score))
+        write_gph(best_G, vars, data_name=data_name, gph_name="best", score=best_score)
 
     # Improve with local search
-    best_G, best_score = local_search_with_optis(vars, df, k_max=10000, data_name=data_name, G=best_G, t_max=0.1,
-                            k_max_without_improvements=500,
+    best_G, best_score = local_search_with_optis(vars, df, k_max=100000, data_name=data_name, G=best_G, t_max=40.0,
+                            k_max_without_improvements=1000,
                             score_improvement_to_save=1.0,
-                            score_min_to_save=-3820,
-                            log_score_every=1000,
-                            return_on_restart=True)
+                            score_min_to_save=-np.inf,
+                            log_score_every=100,
+                            return_on_restart=False)
     print("Best score after local search: {}".format(best_score))
     write_gph(best_G, vars, data_name=data_name, gph_name="best_after_optims", score=best_score)

@@ -103,6 +103,7 @@ def local_search_with_optis(vars, df, k_max, data_name, G=None,
                             return_on_restart=False):
     # Generate initial graph
     score, score_comp = None, None
+    init_G = G.copy()
     if G is None:
         G, score, score_comp = random_graph_init(vars, df)
     else:
@@ -112,13 +113,15 @@ def local_search_with_optis(vars, df, k_max, data_name, G=None,
     last_saved_score = -np.inf
     k_last_improvement = -1
     k_last_restart = 0
+    score_of_last_improvement = - np.inf
+    best_G = G.copy()
     
     # Tabu
     tabu = set()
     tabu_full_threshold = 0.9 * len(vars) * (len(vars) - 1)
 
     for k in tqdm(range(k_max)):
-        temp = t_max * (1 - (k - k_last_restart) / (k_max - k_last_restart) )
+        temp = t_max * (1 - (k) / (k_max) )
         G_prime, score_prime, (score_comp_prime_i, score_comp_prime_j), (i, j) = rand_graph_neighbor_with_score(G, score, score_comp, df, vars, tabu=tabu)
         if score_prime is None: continue # This means that the graph is cyclic
 
@@ -132,15 +135,19 @@ def local_search_with_optis(vars, df, k_max, data_name, G=None,
             tabu.clear()
         
         # Random restarts
-        if diff > 0:
+        if score > score_of_last_improvement:
             k_last_improvement = k
+            score_of_last_improvement = score
+            best_G = G.copy()
         if k - k_last_improvement > k_max_without_improvements or len(tabu) > tabu_full_threshold: # No improvement for k_max_without_improvements steps or Tabu is 90% full
             if return_on_restart:
                 print("Stopping at step {} ({} steps without improvement)".format(k, k - k_last_improvement))
                 return G, score
             print("Restarting at step {} ({} steps without improvement)".format(k, k - k_last_improvement))
             k_last_restart = k
-            G, score, score_comp = random_graph_init(vars, df)
+            k_last_improvement = k
+            G = best_G.copy()
+            score, score_comp = bayesian_score(vars, G, df)
             tabu.clear()
 
         # Saving best graph
