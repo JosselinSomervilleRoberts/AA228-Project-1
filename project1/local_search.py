@@ -75,12 +75,13 @@ def local_search(vars, df, k_max, data_name, G=None):
     score, score_comp = bayesian_score(vars, G, df)
 
     for k in tqdm(range(k_max)):
-        G_prime, score_prime, score_comp_prime, j = rand_graph_neighbor_with_score(G, score, score_comp, df, vars)
+        G_prime, score_prime, (score_comp_prime_i, score_comp_prime_j), (i, j) = rand_graph_neighbor_with_score(G, score, score_comp, df, vars)
         if is_cyclic(G_prime):
             continue
         if score_prime > score:
             score = score_prime
-            score_comp[j] = score_comp_prime    
+            score_comp[i] = score_comp_prime_i  
+            score_comp[j] = score_comp_prime_j     
             G = G_prime
             print("New best score: {}".format(score))
             if score > -425000: write_gph(G, vars, data_name=data_name, gph_name="local_best_" + str(k), score=score)
@@ -95,15 +96,14 @@ def random_graph_init(vars, df):
     return G, score, score_comp
 
 def local_search_with_optis(vars, df, k_max, data_name, G=None,
-                            t_max=5,
+                            t_max=0.0001,
                             k_max_without_improvements=2000,
-                            score_improvement_to_save=5,
-                            score_min_to_save=-4200,
-                            log_score_every=1000,
+                            score_improvement_to_save=1,
+                            score_min_to_save=-np.inf,
+                            log_score_every=100,
                             return_on_restart=False):
     # Generate initial graph
     score, score_comp = None, None
-    init_G = G.copy()
     if G is None:
         G, score, score_comp = random_graph_init(vars, df)
     else:
@@ -165,9 +165,10 @@ def local_search_with_optis(vars, df, k_max, data_name, G=None,
 if __name__ == "__main__":
     import sys
     from utils import load_data, write_gph
+    from k2_search import k2
 
     # Check arguments
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         raise Exception("usage: python k2_search.py <infile>.csv")
     inputfilename = sys.argv[1]
     data_name = inputfilename.split("/")[-1].split(".")[0]
@@ -183,10 +184,10 @@ if __name__ == "__main__":
     df, vars = load_data(inputfilename)
 
     # Run k2
-    G, score = None, None
+    G, score = k2(np.random.permutation(len(vars)), vars, df, max_parents=8) 
     if use_optims:
-        G, score = local_search_with_optis(vars, df, 1000, data_name=data_name)
+        G, score = local_search_with_optis(vars, df, 100000, data_name=data_name, G=G)
     else:
-        G, score = local_search(vars, df, 1000, data_name=data_name)
+        G, score = local_search(vars, df, 100000, data_name=data_name, G=G)
     print("Best score: {}".format(score))
     write_gph(G, vars, data_name=data_name, gph_name="local_best", score=score)

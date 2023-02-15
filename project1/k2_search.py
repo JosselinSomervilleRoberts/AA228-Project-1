@@ -38,7 +38,7 @@ def k2(ordering, vars, df, max_parents=2, empty_score=None, empty_score_comp=Non
     G.add_nodes_from(list(range(len(ordering))))
     score, score_comp = empty_score, empty_score_comp
     if score is None or score_comp is None: score, score_comp = bayesian_score(vars, G, df)
-    for (k, i) in enumerate(ordering[1:]):
+    for (k, i) in enumerate(tqdm(ordering[1:])):
         if len(inneighbors(G, i)) >= max_parents:
             continue
         while True:

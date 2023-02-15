@@ -161,4 +161,4 @@ def create_graph_from_gene(individual, vars):
             elif individual[index] == 2:
                 graph.add_edge(j, i)
             index += 1
-    return graph
+    return graph 
