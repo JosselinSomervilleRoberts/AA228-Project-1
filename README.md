@@ -24,7 +24,7 @@ One key aspect is that I very much optimized the computation of the Bayesian sco
 - I simplified the Bayesian_score_component function, using the fact that alpha is simply a
     matrix full of ones. So we can get rid of the construction of alpha and only computing its
     shape and then adapt the function using the fact that alpha is full of ones:
-    ```python
+ ```python
     def bayesian_score_component(M, alpha_shape):
     """Algorithm 5.1 - Page 98 of the book - Helper function."""
     # I've optimized the next line by using the fact that alpha is a vector of 1s
@@ -42,12 +42,12 @@ One key aspect is that I very much optimized the computation of the Bayesian sco
     # p -= np.sum(scipy.special.loggamma(np.sum(alpha, axis=1) + np.sum(M, axis=1)))
     p -= np.sum(scipy.special.loggamma(alpha_shape[1] + np.sum(M, axis=1)))
     return p
-    ```
+```
 - I only recomputed the component that changed when adding a parent rather than the entire
     score.
 - I did two group by. First, when I loaded the data, I grouped it by identical realizations. Then,
     what really made a difference is when I compute $M$, I group by the data by the realization of the node and its parent, which makes it so that instead of looping through 10k lines, we only get a few hundreds at most. Also I only recomputed the $M[i]$ needed and all the Ms, just as explained in the previous point.
-    ```python
+```python
     def statistics_for_single_var(vars, G, df, var_index):
     """Computes M for a single var_index.
     This version is optimized for speed.
@@ -67,7 +67,7 @@ One key aspect is that I very much optimized the computation of the Bayesian sco
         j = 0 if has_no_parent else sub2ind(r_parents, row[1:-1] - 1)
         M_var[j,k] += row[-1]
     return M_var
-    ```
+```
 
 - I precomputed a lot of terms that were computed at each iteration in the algorithm such as
     parents, r_parents, ...
